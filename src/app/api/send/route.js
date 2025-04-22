@@ -4,19 +4,31 @@ import path from 'path';
 
 export async function POST(request) {
   const { phone, message } = await request.json();
-
-  // Validate input
-  if (!phone?.startsWith('+') || !message?.trim()) {
-    return NextResponse.json(
-      { success: false, error: 'Invalid phone or message format' },
-      { status: 400 }
-    );
-  }
-
+  
   try {
+    // Validate input
+    if (!phone || !message) {
+      throw new Error('Phone number and message are required');
+    }
+
+    // Get script path
+    let scriptPath = path.join(process.cwd(),'src', 'scripts', 'send_whatsapp.py');
+    
+    // Windows path fix
+    if (process.platform === 'win64') {
+      scriptPath = scriptPath.replace(/\\/g, '/');
+    }
+
+    // Verify file exists
+    const fs = await import('fs');
+    if (!fs.existsSync(scriptPath)) {
+      throw new Error(`Python script not found at ${scriptPath}`);
+    }
+
     const result = await new Promise((resolve, reject) => {
-      const scriptPath = path.join(process.cwd(), 'scripts/send_whatsapp.py');
-      const pythonProcess = spawn('python', [scriptPath, phone, message]);
+      const pythonProcess = spawn('python', [scriptPath, phone, message], {
+        shell: process.platform === 'win32'
+      });
 
       let output = '';
       let errorOutput = '';
@@ -31,18 +43,26 @@ export async function POST(request) {
 
       pythonProcess.on('close', (code) => {
         if (code !== 0 || errorOutput) {
-          reject(`Python Error [${code}]: ${errorOutput || output}`);
+          reject(errorOutput || `Process exited with code ${code}`);
         } else {
           resolve(output);
         }
       });
     });
 
-    return NextResponse.json({ success: true, result });
+    return NextResponse.json({ 
+      success: true, 
+      result: result.trim() 
+    });
+
   } catch (error) {
     console.error('Server Error:', error);
     return NextResponse.json(
-      { success: false, error: error.message || error },
+      { 
+        success: false, 
+        error: error.message || 'Failed to send message',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
       { status: 500 }
     );
   }
